@@ -1,0 +1,6 @@
+langchain
+pymupdf
+sentence-transformers
+pymongo
+transformers
+torch
