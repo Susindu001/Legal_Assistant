@@ -1,6 +1,17 @@
 langchain
 pymupdf
+pypdf
 sentence-transformers
 pymongo
 transformers
 torch
+fastapi
+uvicorn[standard]
+pydantic
+python-dotenv
+langchain-huggingface
+langchain-mongodb
+langchain-community
+python-multipart
+langchain-huggingface
+langchain_mongodb
