@@ -67,7 +67,7 @@ def pdf_search(query: str, llm, doc_name: str = None) -> str:
     )
 
     # Filter by doc_name if provided
-    filter_query = {"metadata.doc_name": doc_name} if doc_name else {}
+    filter_query = {"doc_name": doc_name} if doc_name else {}
     print(f"🔍 Running similarity search for query: {query} with filter: {filter_query}")
 
     raw_results = db.similarity_search(query, k=k*2, filter=filter_query)
@@ -118,5 +118,5 @@ def list_uploaded_documents():
     client = MongoClient(MONGODB_URI)
     collection = client[DB_NAME][COLLECTION_NAME]
 
-    doc_names = collection.distinct("metadata.doc_name")
+    doc_names = collection.distinct("doc_name")
     return doc_names
