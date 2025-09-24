@@ -2,38 +2,35 @@ import os
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, UploadFile, File
 from pydantic import BaseModel
-from modules.rag_pipeline import pdf_search, create_vector_db
-from langchain_community.llms import Ollama   # ✅ Ollama LLM
+from modules.rag_pipeline import pdf_search, create_vector_db, list_uploaded_documents
+from langchain_community.llms import Ollama
 
-# Load environment variables
 load_dotenv()
-
 app = FastAPI(title="Legal Assistant API", description="AI-powered legal document assistant")
 
-# Global PDF storage
-PDF_PATH = None
-
 # Initialize local LLM (Ollama Mistral)
-print("[DEBUG] Initializing local Mistral (Ollama) at startup...")
 MODEL_NAME = os.getenv("MODEL_NAME", "mistral")
-print(f"[DEBUG] Using local Ollama model: {MODEL_NAME}")
-
 llm = Ollama(model=MODEL_NAME)
-print("[DEBUG] Ollama Mistral model initialized successfully")
+
+# === Request/Response Models ===
+class UploadPDFResponse(BaseModel):
+    message: str
+    doc_name: str
 
 class QuestionRequest(BaseModel):
     question: str
+    doc_name: str = None  # Optional, filter by uploaded document
 
 class QuestionResponse(BaseModel):
     answer: str
 
+# === Endpoints ===
 @app.get("/")
 async def root():
     return {"message": "Legal Assistant API is running with local Mistral via Ollama!"}
 
-@app.post("/upload_pdf")
+@app.post("/upload_pdf", response_model=UploadPDFResponse)
 async def upload_pdf(file: UploadFile = File(...)):
-    global PDF_PATH
     try:
         upload_dir = "data"
         os.makedirs(upload_dir, exist_ok=True)
@@ -43,22 +40,28 @@ async def upload_pdf(file: UploadFile = File(...)):
         with open(file_path, "wb") as f:
             f.write(file_content)
 
-        PDF_PATH = file_path
+        doc_name = file.filename
+        print(f"before entering create_vector_db with {file_path} and {doc_name}")
+        create_vector_db(file_path, doc_name)
+        print(f"after exiting create_vector_db with {file_path} and {doc_name}")
 
-        import modules.rag_pipeline as rag_pipeline
-        rag_pipeline.PDF_PATH = PDF_PATH
-        rag_pipeline.create_vector_db()
-
-        return {"message": f"PDF uploaded and vector database created for {file.filename}"}
+        return UploadPDFResponse(message="PDF uploaded and vector database updated.", doc_name=doc_name)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/ask", response_model=QuestionResponse)
 async def ask_question_endpoint(request: QuestionRequest):
     try:
-        import modules.rag_pipeline as rag_pipeline
-        answer = rag_pipeline.pdf_search(request.question, llm)
+        answer = pdf_search(query=request.question, llm=llm, doc_name=request.doc_name)
         return QuestionResponse(answer=answer)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/list_documents")
+async def list_documents():
+    try:
+        docs = list_uploaded_documents()
+        return {"uploaded_documents": docs}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -69,24 +72,6 @@ async def health_check():
         client = MongoClient(os.getenv("MONGODB_URI"))
         collection = client["documents"]["documents_vectors"]
         doc_count = collection.count_documents({})
-        
-        return {
-            "status": "healthy",
-            "pdf_loaded": PDF_PATH is not None,
-            "pdf_path": PDF_PATH,
-            "mongodb_documents": doc_count,
-            "llm_initialized": llm is not None
-        }
+        return {"status": "healthy", "mongodb_documents": doc_count, "llm_initialized": llm is not None}
     except Exception as e:
-        return {
-            "status": "error",
-            "pdf_loaded": PDF_PATH is not None,
-            "pdf_path": PDF_PATH,
-            "mongodb_documents": "error",
-            "llm_initialized": llm is not None,
-            "error": str(e)
-        }
-
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+        return {"status": "error", "error": str(e)}

@@ -15,3 +15,4 @@ langchain-community
 python-multipart
 langchain-huggingface
 langchain_mongodb
+langchain_experimental

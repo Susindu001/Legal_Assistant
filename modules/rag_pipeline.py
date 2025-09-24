@@ -1,11 +1,10 @@
 import os
 from pymongo import MongoClient
 from langchain_community.document_loaders import PyPDFLoader
-from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_mongodb import MongoDBAtlasVectorSearch
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain.prompts import ChatPromptTemplate
-#from main import llm  # Ensure llm is initialized in main.py before using here
+from langchain_experimental.text_splitter import SemanticChunker
 
 # === Embedding model ===
 embedding_model = HuggingFaceEmbeddings(
@@ -15,30 +14,31 @@ embedding_model = HuggingFaceEmbeddings(
 )
 
 # === Configuration ===
-PDF_PATH = "./data/Lease-Agreement-Template-for-landlords-dd-15-Mar-22.pdf"
 MONGODB_URI = "mongodb+srv://susindugajanayake:xFwZvwzWBIUtMuvL@cluster0.z40kp.mongodb.net/"
 DB_NAME = "documents"
 COLLECTION_NAME = "documents_vectors"
 INDEX_NAME = "embedding_index"
 
 # === Create Vector DB in MongoDB ===
-def create_vector_db():
-    if not PDF_PATH or not os.path.exists(PDF_PATH):
-        raise FileNotFoundError(f"PDF file not found at: {PDF_PATH}")
+def create_vector_db(doc_path, doc_name):
+    if not doc_path or not os.path.exists(doc_path):
+        raise FileNotFoundError(f"PDF file not found at: {doc_path}")
 
-    print(f"📄 Loading PDF from {PDF_PATH}...")
-    loader = PyPDFLoader(PDF_PATH)
+    print(f"📄 Loading PDF from {doc_path}...")
+    loader = PyPDFLoader(doc_path)
     documents = loader.load()
     print(f"✅ Loaded {len(documents)} pages")
 
-    splitter = RecursiveCharacterTextSplitter(
-        chunk_size=1200,
-        chunk_overlap=500,
-        length_function=len,
-        add_start_index=True,
-    )
-    chunks = splitter.split_documents(documents)
-    print(f"✅ Created {len(chunks)} chunks")
+    # Initialize SemanticChunker
+    chunker = SemanticChunker(embedding_model)
+
+    # Split documents semantically
+    chunks = chunker.split_documents(documents)
+    print(f"✅ Created {len(chunks)} semantic chunks")
+
+    # Add document name to metadata
+    for chunk in chunks:
+        chunk.metadata["doc_name"] = doc_name
 
     print("🌐 Connecting to MongoDB...")
     client = MongoClient(MONGODB_URI)
@@ -55,7 +55,7 @@ def create_vector_db():
     print(f"✅ Stored {len(chunks)} vectors in MongoDB.")
 
 # === Semantic Search on MongoDB ===
-def pdf_search(query: str, llm) -> str:
+def pdf_search(query: str, llm, doc_name: str = None) -> str:
     k = 10
     client = MongoClient(MONGODB_URI)
     collection = client[DB_NAME][COLLECTION_NAME]
@@ -66,8 +66,11 @@ def pdf_search(query: str, llm) -> str:
         index_name=INDEX_NAME
     )
 
-    print(f"🔍 Running similarity search for query: {query}")
-    raw_results = db.similarity_search(query,k=k*2)  # Get more to allow dedup
+    # Filter by doc_name if provided
+    filter_query = {"metadata.doc_name": doc_name} if doc_name else {}
+    print(f"🔍 Running similarity search for query: {query} with filter: {filter_query}")
+
+    raw_results = db.similarity_search(query, k=k*2, filter=filter_query)
     seen = set()
     results = []
 
@@ -85,8 +88,6 @@ def pdf_search(query: str, llm) -> str:
     context_text = "\n\n---\n\n".join(
         [f"[Page {doc.metadata.get('page', '?')}] {doc.page_content}" for doc in results]
     )
-
-    print(context_text)
 
     PROMPT_TEMPLATE = """
     You are given a context that contains multiple clauses of a legal lease.
@@ -110,5 +111,12 @@ def pdf_search(query: str, llm) -> str:
 
     print(f"🧠 Sending prompt to LLM...")
     response = llm.invoke(prompt)
-    #print("\nSearch result / LLM answer:\n", response)
     return response
+
+# === List all uploaded documents ===
+def list_uploaded_documents():
+    client = MongoClient(MONGODB_URI)
+    collection = client[DB_NAME][COLLECTION_NAME]
+
+    doc_names = collection.distinct("metadata.doc_name")
+    return doc_names
