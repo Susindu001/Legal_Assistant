@@ -19,7 +19,7 @@ class UploadPDFResponse(BaseModel):
 
 class QuestionRequest(BaseModel):
     question: str
-    doc_name: str = None  # Optional, filter by uploaded document
+    doc_name: str   # Optional, filter by uploaded document
 
 class QuestionResponse(BaseModel):
     answer: str
